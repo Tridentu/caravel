@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="repository">
+    <id>io.github.tridentu.caravel_cmr</id>
+    <metadata-license>FSFAP</metadata-license>
+    <name>Caravel Main Repository</name>
+    <summary>
+        <p>
+            The Caravel Main Repository (or CMR) is a software repository that is used on
+            Tridentu Linux systems. One of it's main features is the packaging of common "dotfiles" (configuration files)
+        </p>
+    </summary>
+
+</component>

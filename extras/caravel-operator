@@ -9,6 +9,11 @@ class CaravelOperator(cmd2.Cmd):
   add_package_parser = cmd2.Cmd2ArgumentParser()
   add_package_parser.add_argument("-v",'--verbose', action="store_true", help="Verbose output")
 
+  add_to_packagekit_parser = cmd2.Cmd2ArgumentParser()
+  add_to_packagekit_parser.add_argument("-v",'--verbose', action="store_true", help="Verbose output")
+  add_to_packagekit_parser.add_argument('-p', '--package', action='store_true', help='The name of the package to register.')
+  add_to_packagekit_parser.add_argument('-a', '--use_arch', action='store_true', help='Specify a custom architecture.')
+
   def __init__(self):
       shortcuts = cmd2.DEFAULT_SHORTCUTS
       shortcuts.update({'+': "add_package"})
@@ -42,7 +47,38 @@ class CaravelOperator(cmd2.Cmd):
             self.pkgcount = len(self.records.fetchall())
             self.exec_db_command("insert into packageinfo values (%d, \"%s\", \"%s\", \"%s\", \"%s\", \"%s\")" % (self.pkgcount, self.pkg_params['name'], self.pkg_params['pkgDesc'], self.pkg_params['pkgType'], self.pkg_params['category'], "x86_64"));
        self.verbose = False
-  
+
+  @cmd2.with_category("Repository Management")
+  @cmd2.with_argparser(add_to_packagekit_parser)
+  def do_add_to_packagekit(self,args):
+       """Adds an existing package to the packagekit table."""
+       self.pkg_params = {}
+       self.pkg_params['name'] = args.package or prompt("Name of the package:")
+       self.pkg_params['version'] = prompt("Package version:")
+       self.pkg_params['pkgArchitecture'] = "x86_64"
+       if args.use_arch:
+         self.pkg_params["pkgArchitecture"] = prompt("Package Architecture (CPU type):")
+       self.pkg_params['pkgData'] = "caravel-cmr";
+       self.verbose = args.verbose
+       with self.db:
+          try:
+            self.records = self.db.execute("select * from packageinfo where name like \"" + self.pkg_params["name"] + "%\"")
+          except Exception as e:
+            if self.verbose:
+                print(repr(e))
+          else:
+            self.pkgs = self.records.fetchall()
+            self.pkgcount = len(self.pkgs)
+            if self.pkgcount == 1:
+                self.exec_db_command("insert into packagekit-ids values (\"%s\", \"%s;%s;%s;%s\")" % (self.pkgs[0]["pkgId"], self.pkg_params['name'], self.pkg_params['version'], self.pkg_params['pkgArchitecture'], self.pkg_params['pkgData']));
+            elif self.pkgcount > 1:
+                print("Package must be unique (%i packages were found under the given name)." % (self.pkgcount))
+            else:
+                print("Package must exist (no packages were found under the given name).")
+       self.pkgs = None
+       self.verbose = False
+
+
   @cmd2.with_category("Repository Management")
   @cmd2.with_argparser(add_package_parser)
   def do_view_packages(self,args):
