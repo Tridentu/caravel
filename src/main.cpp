@@ -32,20 +32,32 @@ int main(int argc, char** argv){
     std::string packageType;
     createPackage->add_option("type",packageType,"The type of Caravel package to create (binaries, source, config or assets).")->required()->check(CaravelPM::CaravelPkgClass);
 
+
+    CLI::Option* opt = createPackage->add_flag("--hybrid", "Whether or not the package is reinstallable.");
+
+
     createPackage->callback([&](){
       std::filesystem::path path_pkg = ((std::filesystem::current_path() +=  "/") += packageDir);
       if (!std::filesystem::exists(path_pkg)){
 	std::cout << "Package Directory does not exist." << std::endl;
 	return 0;
       }
+      std::map<std::string, std::string> propMap;
+
+      if(*opt){
+        propMap.insert(std::make_pair("buildType","hybrid"));
+      } else
+          propMap.insert(std::make_pair("buildType","regular"));
+
+
       std::cout << "Creating package..." << std::endl;
       if(packageType == "binaries"){
 	std::cout << "Binary format detected." << std::endl;
-	CaravelPM::CaravelAuthor::CreatePackage(packageDir,CaravelPM::CaravelPkgType::Binaries);
+	CaravelPM::CaravelAuthor::CreatePackage(packageDir,CaravelPM::CaravelPkgType::Binaries,propMap);
 	std::cout << "Package " << packageDir << " Created (" << packageDir << ".caravel" << ")" << std::endl;
       } else if (packageType == "config") {
 	std::cout << "Dotfiles detected." << std::endl;
-	CaravelPM::CaravelAuthor::CreatePackage(packageDir,CaravelPM::CaravelPkgType::DotFiles);
+	CaravelPM::CaravelAuthor::CreatePackage(packageDir,CaravelPM::CaravelPkgType::DotFiles,propMap);
 	std::cout << "Package " << packageDir << " Created (" << packageDir << ".caravel" << ")" << std::endl;
       }
     
@@ -136,6 +148,15 @@ int main(int argc, char** argv){
             std::cerr << "Can't extract package." << std::endl;
             return 0;
           }
+          if(reader->hasHybridType()){
+             std::cout << "Hybrid package detected. Caravel will reinstall this package." << std::endl;
+             std::string uninstallScript(std::string(getenv("HOME")) + "/ccontainer/uninstall.lua");
+             std::filesystem::path ulPath(uninstallScript);
+
+             CaravelPM::CaravelContext* context = new CaravelPM::CaravelContext(ulPath.string());
+             context->Run();
+             delete context;
+          }
           if(!reader->Install()){
             std::cerr << "Can't install package " << reader->GetMetadata("name") << std::endl;
             return 0;
@@ -198,7 +219,23 @@ int main(int argc, char** argv){
         return 0;
     });
   }
-  caravelApp.footer("Caravel v0.2.0");
+    {
+    auto list_ip = caravelApp.add_subcommand("list-installed-packages","Lists all installed packages");
+ 
+    list_ip->callback([&](){
+        CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/acquirium/pman.caraveldb");
+        auto packages =  CaravelPM::CaravelDBContext::GetDB()->GetInstalledPackages();
+        if (packages.size() <= 0)
+            std::cout << "No packages installed." << std::endl;
+        else {
+            for(const auto& pack : packages)
+                std::cout << pack.name << std::endl;
+        }
+            
+        return 0;
+    });
+  }
+  caravelApp.footer("Caravel v0.3.0");
 
   CLI11_PARSE(caravelApp, argc, argv);
 
