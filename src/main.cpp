@@ -15,11 +15,32 @@
 #include <CLI11.hpp>
 #include <vector>
 #include <mast_tk/core/LineUtils.hpp>
+#include <caravel/CaravelTypeLoader.hpp>
+
+
+
+CaravelPM::CaravelTypeLoader* loader = CaravelPM::InitLoader();
+
+
+struct CaravelPkgTypeValidator : public CLI::Validator {
+    CaravelPkgTypeValidator(){
+      name_ = "CRAVPKGTYPE";
+      func_ = [&](const std::string& str){
+          if(loader->getPackageType(str).name.empty()){
+            return std::string("the package type must be one of the types registered in /usr/lib/caravel-plugins."); 
+          } else {
+            return std::string();
+          }
+      };
+    }
+};
 
 int main(int argc, char** argv){
 
   CLI::App caravelApp;
-
+  
+  
+    loader->loadAllTypes();
   caravelApp.require_subcommand(1);
 
   {
@@ -30,35 +51,33 @@ int main(int argc, char** argv){
     createPackage->add_option("packagedir",packageDir,"The package directory (relative to the current working directory)")->required();
 
     std::string packageType;
-    createPackage->add_option("type",packageType,"The type of Caravel package to create (binaries, source, config or assets).")->required()->check(CaravelPM::CaravelPkgClass);
+    createPackage->add_option("type",packageType,"The type of Caravel package to create (binaries, source, config or assets).")->required()->check(CaravelPkgTypeValidator());
 
 
-    CLI::Option* opt = createPackage->add_flag("--hybrid", "Whether or not the package is reinstallable.");
+    bool hybrid_only;
+    createPackage->add_flag("--hybrid", hybrid_only, "Whether or not the package is reinstallable.");
 
 
     createPackage->callback([&](){
       std::filesystem::path path_pkg = ((std::filesystem::current_path() +=  "/") += packageDir);
       if (!std::filesystem::exists(path_pkg)){
-	std::cout << "Package Directory does not exist." << std::endl;
-	return 0;
+        std::cout << "Package Directory does not exist." << std::endl;
+        return 0;
       }
       std::map<std::string, std::string> propMap;
 
-      if(*opt){
+      if(hybrid_only){
         propMap.insert(std::make_pair("buildType","hybrid"));
       } else
           propMap.insert(std::make_pair("buildType","regular"));
 
 
       std::cout << "Creating package..." << std::endl;
-      if(packageType == "binaries"){
-	std::cout << "Binary format detected." << std::endl;
-	CaravelPM::CaravelAuthor::CreatePackage(packageDir,CaravelPM::CaravelPkgType::Binaries,propMap);
-	std::cout << "Package " << packageDir << " Created (" << packageDir << ".caravel" << ")" << std::endl;
-      } else if (packageType == "config") {
-	std::cout << "Dotfiles detected." << std::endl;
-	CaravelPM::CaravelAuthor::CreatePackage(packageDir,CaravelPM::CaravelPkgType::DotFiles,propMap);
-	std::cout << "Package " << packageDir << " Created (" << packageDir << ".caravel" << ")" << std::endl;
+      CaravelPM::CaravelPackageType packageType2 = loader->getPackageType(packageType);
+      if(!packageType2.name.empty()){
+          std::cout <<  packageType2.name <<  " format detected." << std::endl;
+          CaravelPM::CaravelAuthor::CreatePackage(packageDir,packageType2.name,propMap,loader);
+          std::cout << "Package " << packageDir << " Created (" << packageDir << ".caravel" << ")" << std::endl;
       }
     
     });
@@ -95,7 +114,8 @@ int main(int argc, char** argv){
   {
     auto installPackage = caravelApp.add_subcommand("install-package","Installs a caravel package.");
     bool local_package = false;
-    installPackage->add_flag("--local",local_package,"Uses a local file instead of a package in a repository.");
+    auto cb = [&](int count){ local_package = (count > 0);};
+    CLI::Option* localPackage = installPackage->add_flag("-l,--local",cb,"Uses a local file instead of a package in a repository.");
 
     std::string packageName;
     installPackage->add_option("packagename", packageName, "The name of the package (or archive) to install.")->required();
@@ -104,7 +124,7 @@ int main(int argc, char** argv){
       CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/acquirium/pman.caraveldb");
       if(local_package){
         std::filesystem::path path_pkg = std::filesystem::current_path() / std::filesystem::path(std::string(packageName + ".caravel"));
-        CaravelPM::CaravelReader* reader = new CaravelPM::CaravelReader(path_pkg.string(),std::string(packageName + ".caravel"));
+        CaravelPM::CaravelReader* reader = new CaravelPM::CaravelReader(path_pkg.string(),std::string(packageName + ".caravel"), loader);
 
         if(!reader->Extract()){
           std::cerr << "Can't extract package." << std::endl;
@@ -143,14 +163,14 @@ int main(int argc, char** argv){
                 return 0;
           }
           delete checker;
-          CaravelPM::CaravelReader* reader = new CaravelPM::CaravelReader(path_pkg.string(),std::string(packageName + ".caravel"));
+          CaravelPM::CaravelReader* reader = new CaravelPM::CaravelReader(path_pkg.string(),std::string(packageName + ".caravel"), loader);
           if(!reader->Extract()){
             std::cerr << "Can't extract package." << std::endl;
             return 0;
           }
           if(reader->hasHybridType()){
              std::cout << "Hybrid package detected. Caravel will reinstall this package." << std::endl;
-             std::string uninstallScript(std::string(getenv("HOME")) + "/ccontainer/uninstall.lua");
+             std::string uninstallScript(std::string(std::string(getenv("HOME")) + "/ccontainer/uninstall.lua"));
              std::filesystem::path ulPath(uninstallScript);
 
              CaravelPM::CaravelContext* context = new CaravelPM::CaravelContext(ulPath.string());
@@ -236,7 +256,7 @@ int main(int argc, char** argv){
     });
   }
   caravelApp.footer("Caravel v0.3.0");
-
+  
   CLI11_PARSE(caravelApp, argc, argv);
 
 
