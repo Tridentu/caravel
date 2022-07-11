@@ -110,7 +110,7 @@ int main(int argc, char** argv){
       return 0;
     });
   }
-
+  
   {
     auto installPackage = caravelApp.add_subcommand("install-package","Installs a caravel package.");
     bool local_package = false;
@@ -140,6 +140,7 @@ int main(int argc, char** argv){
       } else {
           // Check if the package exists.
           std::string packageNamespace = CaravelPM::CaravelDBContext::GetDB()->FindNamespace(packageName);
+
           if(packageNamespace.empty()){
             std::cerr << "Can't download package; " << packageName << " doesn't exist." << std::endl;
             return 0;
@@ -155,8 +156,12 @@ int main(int argc, char** argv){
           
           CaravelPM::CaravelPackageChecker* checker = new CaravelPM::CaravelPackageChecker(path_pkg.string(), true, packageName);
           std::cout << "Loading signature file..." << std::endl;
-          checker->LoadSignatureAndContents(true);
+          std::string packageType = CaravelPM::CaravelDBContext::GetDB()->FindType(packageName);
+
+          auto packageTypeObj = loader->getPackageType(packageType);
+          checker->LoadSignatureAndContents(true,packageTypeObj.ver_dir());
           std::cout << "Verifying package..." << std::endl;
+
           bool isVerified = checker->Verify();
           if (!isVerified){
                 std::cerr << "Can't extract package - marked as malicious or unknown. Exiting..." << std::endl;
