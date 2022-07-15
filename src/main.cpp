@@ -140,10 +140,17 @@ int main(int argc, char** argv){
       } else {
           // Check if the package exists.
           std::string packageNamespace = CaravelPM::CaravelDBContext::GetDB()->FindNamespace(packageName);
-
+          CaravelPM::CaravelPackageGroup*  pkgGroup;
           if(packageNamespace.empty()){
+            pkgGroup = CaravelPM::CaravelDBContext::GetDB()->GetPackageGroup(packageName);
+          }
+          
+          if(packageNamespace.empty() && !pkgGroup){
             std::cerr << "Can't download package; " << packageName << " doesn't exist." << std::endl;
             return 0;
+          } else if(pkgGroup && packageNamespace.empty()){
+            std::cout << "Found package: " << pkgGroup->ToPackage() << std::endl;
+            packageName = pkgGroup->ToPackage();
           }
           std::cout << "Downloading Caravel Package " << packageName << "..." << std::endl;
           std::string url = CaravelPM::CaravelDBContext::GetDB()->GetPackageLink(packageName);
