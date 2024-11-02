@@ -89,7 +89,7 @@ int main(int argc, char** argv){
     std::string query;
     findPackages->add_option("packagequery", query, "The keyword or or query to find packages with.")->required();
     findPackages->callback([&](){
-      CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/acquirium/pman.caraveldb");
+      CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/cmr/pman.caraveldb", true);
       std::vector<CaravelPM::CaravelPackageInfo> infos = CaravelPM::CaravelDBContext::GetDB()->FindPackagesFromNameQuery(query);
       if(infos.empty())
         std::cout << "No packages found.";
@@ -121,7 +121,7 @@ int main(int argc, char** argv){
     installPackage->add_option("packagename", packageName, "The name of the package (or archive) to install.")->required();
   
     installPackage->callback([&](){
-      CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/acquirium/pman.caraveldb");
+      CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/cmr/pman.caraveldb", true);
       if(local_package){
         std::filesystem::path path_pkg = std::filesystem::current_path() / std::filesystem::path(std::string(packageName + ".caravel"));
         CaravelPM::CaravelReader* reader = new CaravelPM::CaravelReader(path_pkg.string(),std::string(packageName + ".caravel"), loader);
@@ -159,9 +159,9 @@ int main(int argc, char** argv){
           downloader->Run();
           std::cout << "Installing Caravel Package " << packageName << "..." << std::endl;
           
-          std::filesystem::path path_pkg = std::filesystem::path(std::string(getenv("HOME")) + std::string("/" + packageName + ".caravel"));
+          std::filesystem::path path_pkg = std::filesystem::path(std::string("/tmp/" + packageName + ".caravel"));
           
-          CaravelPM::CaravelPackageChecker* checker = new CaravelPM::CaravelPackageChecker(path_pkg.string(), true, packageName);
+          CaravelPM::CaravelPackageChecker* checker = new CaravelPM::CaravelPackageChecker("/tmp/" + std::string(packageName + ".caravel"), true, packageName);
           std::cout << "Loading signature file..." << std::endl;
           std::string packageType = CaravelPM::CaravelDBContext::GetDB()->FindType(packageName);
 
@@ -255,7 +255,7 @@ int main(int argc, char** argv){
     auto list_ip = caravelApp.add_subcommand("list-installed-packages","Lists all installed packages");
  
     list_ip->callback([&](){
-        CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/acquirium/pman.caraveldb");
+        CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/cmr/pman.caraveldb", true);
         auto packages =  CaravelPM::CaravelDBContext::GetDB()->GetInstalledPackages();
         if (packages.size() <= 0)
             std::cout << "No packages installed." << std::endl;
