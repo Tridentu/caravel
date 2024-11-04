@@ -16,17 +16,18 @@
 #include <vector>
 #include <mast_tk/core/LineUtils.hpp>
 #include <caravel/CaravelTypeLoader.hpp>
+#include <caravel/CaravelSession.h>
 
 
 
-CaravelPM::CaravelTypeLoader* loader = CaravelPM::InitLoader();
+CaravelPM::CaravelSession* session;  
 
 
 struct CaravelPkgTypeValidator : public CLI::Validator {
     CaravelPkgTypeValidator(){
       name_ = "CRAVPKGTYPE";
       func_ = [&](const std::string& str){
-          if(loader->getPackageType(str).name.empty()){
+          if(session->getPackageType(str).name.empty()){
             return std::string("the package type must be one of the types registered in /usr/lib/caravel-plugins."); 
           } else {
             return std::string();
@@ -38,9 +39,9 @@ struct CaravelPkgTypeValidator : public CLI::Validator {
 int main(int argc, char** argv){
 
   CLI::App caravelApp;
+  session = new CaravelPM::CaravelSession(); 
   
   
-    loader->loadAllTypes();
   caravelApp.require_subcommand(1);
 
   {
@@ -73,10 +74,10 @@ int main(int argc, char** argv){
 
 
       std::cout << "Creating package..." << std::endl;
-      CaravelPM::CaravelPackageType packageType2 = loader->getPackageType(packageType);
+      CaravelPM::CaravelPackageType packageType2 = session->getPackageType(packageType);
       if(!packageType2.name.empty()){
           std::cout <<  packageType2.name <<  " format detected." << std::endl;
-          CaravelPM::CaravelAuthor::CreatePackage(packageDir,packageType2.name,propMap,loader);
+          session->Create(packageDir,packageType2,propMap);
           std::cout << "Package " << packageDir << " Created (" << packageDir << ".caravel" << ")" << std::endl;
       }
     
@@ -89,12 +90,16 @@ int main(int argc, char** argv){
     std::string query;
     findPackages->add_option("packagequery", query, "The keyword or or query to find packages with.")->required();
     findPackages->callback([&](){
-      CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/cmr/pman.caraveldb", true);
+      CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), true);
       std::vector<CaravelPM::CaravelPackageInfo> infos = CaravelPM::CaravelDBContext::GetDB()->FindPackagesFromNameQuery(query);
       if(infos.empty())
         std::cout << "No packages found.";
       else  {
-        std::cout << "---------- " << infos.size() <<  " PACKAGES FOUND ----------" << std::endl;
+          if (infos.size() == 1){
+                      std::cout << "---------- " << infos.size() <<  " PACKAGE FOUND ----------" << std::endl;
+          } else { 
+                      std::cout << "---------- " << infos.size() <<  " PACKAGES FOUND ----------" << std::endl;
+          }
         for (int i = 0; i < infos.size(); i++){
           std::cout << "---------- " << infos.at(i).PackageName << "  ----------" << std::endl;
           std::cout << "Package Name: " << infos.at(i).PackageName << std::endl;
@@ -121,10 +126,10 @@ int main(int argc, char** argv){
     installPackage->add_option("packagename", packageName, "The name of the package (or archive) to install.")->required();
   
     installPackage->callback([&](){
-      CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/cmr/pman.caraveldb", true);
+      CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), true);
       if(local_package){
         std::filesystem::path path_pkg = std::filesystem::current_path() / std::filesystem::path(std::string(packageName + ".caravel"));
-        CaravelPM::CaravelReader* reader = new CaravelPM::CaravelReader(path_pkg.string(),std::string(packageName + ".caravel"), loader);
+        CaravelPM::CaravelReader* reader = session->getReader(path_pkg.string(), std::string(packageName + ".caravel"));
 
         if(!reader->Extract()){
           std::cerr << "Can't extract package." << std::endl;
@@ -165,7 +170,7 @@ int main(int argc, char** argv){
           std::cout << "Loading signature file..." << std::endl;
           std::string packageType = CaravelPM::CaravelDBContext::GetDB()->FindType(packageName);
 
-          auto packageTypeObj = loader->getPackageType(packageType);
+          auto packageTypeObj = session->getPackageType(packageType);
           checker->LoadSignatureAndContents(true,packageTypeObj.ver_dir());
           std::cout << "Verifying package..." << std::endl;
 
@@ -175,26 +180,7 @@ int main(int argc, char** argv){
                 return 0;
           }
           delete checker;
-          CaravelPM::CaravelReader* reader = new CaravelPM::CaravelReader(path_pkg.string(),std::string(packageName + ".caravel"), loader);
-          if(!reader->Extract()){
-            std::cerr << "Can't extract package." << std::endl;
-            return 0;
-          }
-          if(reader->hasHybridType()){
-             std::cout << "Hybrid package detected. Caravel will reinstall this package." << std::endl;
-             std::string uninstallScript(std::string(std::string(getenv("HOME")) + "/ccontainer/uninstall.lua"));
-             std::filesystem::path ulPath(uninstallScript);
-
-             CaravelPM::CaravelContext* context = new CaravelPM::CaravelContext(ulPath.string());
-             context->Run();
-             delete context;
-          }
-          if(!reader->Install()){
-            std::cerr << "Can't install package " << reader->GetMetadata("name") << std::endl;
-            return 0;
-          }
-          std::cout << "Done." << std::endl;
-          delete reader;
+         session->ReadAndInstall(path_pkg.string(),std::string(packageName + ".caravel"));
           return 0;
       }
     });
@@ -255,7 +241,7 @@ int main(int argc, char** argv){
     auto list_ip = caravelApp.add_subcommand("list-installed-packages","Lists all installed packages");
  
     list_ip->callback([&](){
-        CaravelPM::CaravelDBContext::InitDB("https://tridentu.github.io/cmr/pman.caraveldb", true);
+        CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), true);
         auto packages =  CaravelPM::CaravelDBContext::GetDB()->GetInstalledPackages();
         if (packages.size() <= 0)
             std::cout << "No packages installed." << std::endl;
