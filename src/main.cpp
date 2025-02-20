@@ -17,10 +17,12 @@
 #include <mast_tk/core/LineUtils.hpp>
 #include <caravel/packages/CaravelTypeLoader.hpp>
 #include <caravel/CaravelSession.h>
+#include <caravel/repository/CaravelRepoManager.h>
 
 
 
 CaravelPM::CaravelSession* session;  
+CaravelPM::CaravelRepoManager* manager;
 
 
 struct CaravelPkgTypeValidator : public CLI::Validator {
@@ -238,6 +240,27 @@ int main(int argc, char** argv){
         }
             
         return 0;
+    });
+  }
+
+  // repository
+  {
+    auto addRepo = caravelApp.add_subcommand("add-repository","Adds a repository to the Caravel Repository Directory (CRD)");
+
+    std::string repoName;
+    addRepo->add_option("name", repoName, "The name of the repository.")->required();
+
+
+    std::string repoTitle;
+    addRepo->add_option("title", repoTitle, "The display name of the repository.")->required();
+
+    std::string repoUrl;
+    addRepo->add_option("url", repoUrl, "The url of the repository.")->required();
+
+    addRepo->callback([&](){
+        manager->addRepository(repoName,repoTitle,repoUrl);
+        manager->saveRepositories();
+        session->writeToLog(CaravelPM::LogLevel::INFO, repoName + " (" + repoTitle + ") saved.");
     });
   }
   caravelApp.footer("Caravel v0.3.5");
