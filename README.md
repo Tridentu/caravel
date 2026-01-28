@@ -13,6 +13,11 @@ Caravel-PM is a package manager written in C/C++. It supports the following feat
 - Various types of plugins (from dotfiles to binaries)
 - Verification of packages (using GPGME)
 - Lua scripting API (for installing/uninstalling packages)
+- Handling of dependencies
+
+## Installing Caravel-PM
+
+Caravel is installed on Tridentu 2 by default.
 
 
 

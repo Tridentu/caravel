@@ -2,7 +2,56 @@
 from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
 import cmd2
-import sqlite3
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Table
+from sqlalchemy.types import Enum
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import declarative_base
+import enum
+import os
+
+declarative_base2 = declarative_base()
+
+
+
+class CaravelPackageType(enum.Enum):
+  binaries = 1
+  configs = 2
+  assets = 3
+  sources = 4
+
+class CaravelArchitecture(enum.Enum):
+  x86_64 = 1
+  arm64 = 2
+  dots = 3
+  assets = 4
+  icons = 5
+  fonts = 6
+
+
+class CaravelPackage(declarative_base2):
+  __tablename__ = "packageinfo"
+  pkgId = Column(Integer, primary_key=True, autoincrement="auto", nullable=False)
+  name = Column(String(255), unique=True, nullable=False)
+  description = Column(Text)
+  pkgType = Column(Enum(CaravelPackageType))
+  category = Column(String(128))
+  architecture = Column(Enum(CaravelArchitecture), nullable=False)
+
+  def __repr__(self):
+    return "<CaravelPackage {name} ({pkgType}, {architecture})>"
+
+class CaravelPackageGroup(declarative_base2):
+  __tablename__ = "packagegroups"
+  id = Column(Integer, primary_key=True, autoincrement="auto", nullable=False)
+  package_group = Column(Text, nullable=False)
+  latest = Column(Text, nullable=False)
+
+  def __repr__(self):
+    return "<CaravelPackageGroup {package_group} ({latest})>"
+
+
+
 
 class CaravelOperator(cmd2.Cmd):
   """ Program used for managing package repositories. """
@@ -18,17 +67,39 @@ class CaravelOperator(cmd2.Cmd):
       shortcuts = cmd2.DEFAULT_SHORTCUTS
       shortcuts.update({'+': "add_package"})
       super().__init__(shortcuts=shortcuts)
-      self.db_path = "./"
+      self.db_path = os.path.abspath(os.getcwd())
       self.add_settable(cmd2.Settable("db_path",str,"The diretory/path to look for the repo manifest (pman.caraveldb) in.",self))
       self.prompt = "Caravel Operator>"
 
   def do_open(self,args):
-    self.db = sqlite3.connect(self.db_path + "pman.caraveldb")
+    self.db = create_engine("sqlite:///" + self.db_path + "/pman.caraveldb")
+    declarative_base2.metadata.create_all(self.db)
+    self.session = Session(self.db)
+
+  @cmd2.with_category("Repository Management")
+  @cmd2.with_argparser(add_package_parser)
+  def do_add_package_group(self,args):
+       """Adds a package to the repository manifest"""
+       self.pkg_params = {}
+       self.pkg_params['package_group'] = prompt("Name of the package (no version number):")
+       self.pkg_params['latest'] = prompt("Latest version:")
+       self.verbose = args.verbose
+       try:
+            package = CaravelPackageGroup(
+                package_group=self.pkg_params["package_group"],
+                latest = self.pkg_params["latest"]
+            )
+            self.session.add(package_group)
+            self.session.commit()
+       except Exception as e:
+            if self.verbose:
+                print(repr(e))
+       self.verbose = False
   
   @cmd2.with_category("Repository Management")
   @cmd2.with_argparser(add_package_parser)
   def do_add_package(self,args):
-       """Adds a package to the repository manifest"""
+       """Adds a package group to the repository manifest"""
        def types_toolbar():
             return HTML('<style bg="ansired">binaries</style>, <style bg="ansigreen">configs</style>, <style bg="ansiblue">assets</style> or <style bg="ansiyellow">sources</style>')
        self.pkg_params = {}
@@ -37,80 +108,74 @@ class CaravelOperator(cmd2.Cmd):
        self.pkg_params['pkgType'] = prompt("Package Type:",  bottom_toolbar=types_toolbar)
        self.pkg_params['pkgDesc'] = prompt("Package Description")
        self.verbose = args.verbose
-       with self.db:
-          try:
-            self.records = self.db.execute("select * from packageinfo")
-          except Exception as e:
+       try:
+            package = CaravelPackage(
+                name=self.pkg_params["name"],
+                category=self.pkg_params["category"],
+                description=self.pkg_params["pkgDesc"],
+                pkgType=self.pkg_params["pkgType"],
+                architecture="x86_64"
+            )
+            self.session.add(package)
+            self.session.commit()
+       except Exception as e:
             if self.verbose:
                 print(repr(e))
-          else:
-            self.pkgcount = len(self.records.fetchall())
-            self.exec_db_command("insert into packageinfo values (%d, \"%s\", \"%s\", \"%s\", \"%s\", \"%s\")" % (self.pkgcount, self.pkg_params['name'], self.pkg_params['pkgDesc'], self.pkg_params['pkgType'], self.pkg_params['category'], "x86_64"));
        self.verbose = False
-
-  @cmd2.with_category("Repository Management")
-  @cmd2.with_argparser(add_to_packagekit_parser)
-  def do_add_to_packagekit(self,args):
-       """Adds an existing package to the packagekit table."""
-       self.pkg_params = {}
-       self.pkg_params['name'] = args.package or prompt("Name of the package:")
-       self.pkg_params['version'] = prompt("Package version:")
-       self.pkg_params['pkgArchitecture'] = "x86_64"
-       if args.use_arch:
-         self.pkg_params["pkgArchitecture"] = prompt("Package Architecture (CPU type):")
-       self.pkg_params['pkgData'] = "caravel-cmr";
-       self.verbose = args.verbose
-       with self.db:
-          try:
-            self.records = self.db.execute("select * from packageinfo where name like \"" + self.pkg_params["name"] + "%\"")
-          except Exception as e:
-            if self.verbose:
-                print(repr(e))
-          else:
-            self.pkgs = self.records.fetchall()
-            self.pkgcount = len(self.pkgs)
-            if self.pkgcount == 1:
-                self.exec_db_command("insert into packagekit-ids values (\"%s\", \"%s;%s;%s;%s\")" % (self.pkgs[0]["pkgId"], self.pkg_params['name'], self.pkg_params['version'], self.pkg_params['pkgArchitecture'], self.pkg_params['pkgData']));
-            elif self.pkgcount > 1:
-                print("Package must be unique (%i packages were found under the given name)." % (self.pkgcount))
-            else:
-                print("Package must exist (no packages were found under the given name).")
-       self.pkgs = None
-       self.verbose = False
-
 
   @cmd2.with_category("Repository Management")
   @cmd2.with_argparser(add_package_parser)
   def do_view_packages(self,args):
         """Displays all of the registered packages from the repo manifest"""
-        with self.db:
-            try:
-                self.records = self.db.execute("select * from packageinfo")
-            except Exception as e:
-                print(repr(e))
-            else:
-                print("================================")
-                count = 0
-                for rec in self.records.fetchall():
-                    print("Name: %s " % rec[1])
-                    print("Description: %s" % rec[2])
-                    print("Type: %s" % rec[3])
-                    print("Category: %s" % rec[4])
-                    if count < len(self.records.fetchall()):
-                        print("------------------------------")
-                print("================================")
-  
+        try:
+          conn  = self.db.connect()
+          print("================================")
+          results = self.session.query(CaravelPackage).all()
+          count = len(results)
+          print("Found %i packages" % count)
+          print("================================")
+          for package in results:
+            name = package.name
+            print("Name: %s" % name)
+            print("Description: %s" % package.description)
+            pkgType = ""
+            if package.pkgType == CaravelPackageType.assets:
+              pkgType = "assets"
+            elif package.pkgType == CaravelPackageType.binaries:
+              pkgType = "binaries"
+            elif package.pkgType == CaravelPackageType.configs:
+              pkgType = "configs"
+            elif package.pkgType == CaravelPackageType.sources:
+              pkgType = "sources"
+            print("Type: %s" % pkgType)
+            print("Category: %s " % package.category)
+            if package.pkgId < len(results):
+              print("------------------------------")
+            print("================================")
+        except Exception as e:
+          print(repr(e))
 
-  def exec_db_command(self,command):
-        with self.db:
-            try:
-                self.db.execute(command)
-            except Exception as e:
-                if self.verbose:
-                  print(repr(e))
-                return False
-            else:
-                return True
+  @cmd2.with_category("Repository Management")
+  @cmd2.with_argparser(add_package_parser)
+  def do_view_package_groups(self,args):
+        """Displays all of the registered package groups from the repo manifest"""
+        try:
+          conn  = self.db.connect()
+          print("================================")
+          results = self.session.query(CaravelPackageGroup).all()
+          count = len(results)
+          print("Found %i package groups" % count)
+          print("================================")
+          for package in results:
+            name = package.package_group
+            print("Package Group: %s" % name)
+            print("Latest Version: %s" % package.latest)
+            if package.id < len(results):
+              print("------------------------------")
+            print("================================")
+        except Exception as e:
+          print(repr(e))
+  
 
 if __name__== "__main__":
   import sys

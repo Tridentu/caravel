@@ -4,7 +4,7 @@
 #include <caravel/packages/CaravelReader.h>
 #include <caravel/packages/CaravelAuthor.h>
 #include <caravel/packages/CaravelContext.h>
-#include <caravel/CaravelDownloader.h>
+#include <caravel/packages/CaravelDownloader.h>
 #include <caravel/packages/CaravelDBContext.h>
 #include <caravel/packages/CaravelSigner.hpp>
 #include <caravel/packages/CaravelPackageChecker.hpp>
@@ -14,7 +14,7 @@
 #include <filesystem>
 #include <CLI11.hpp>
 #include <vector>
-#include <mast_tk/core/LineUtils.hpp>
+#include <tridentu_tk/core/LineUtils.hpp>
 #include <caravel/packages/CaravelTypeLoader.hpp>
 #include <caravel/CaravelSession.h>
 #include <caravel/repository/CaravelRepoManager.h>
@@ -83,7 +83,7 @@ int main(int argc, char** argv){
           session->Create(packageDir,packageType2,propMap);
           std::cout << "Package " << packageDir << " Created (" << packageDir << ".caravel" << ")" << std::endl;
       }
-    
+      return 0;
     });
 
   }
@@ -93,7 +93,9 @@ int main(int argc, char** argv){
     std::string query;
     findPackages->add_option("packagequery", query, "The keyword or or query to find packages with.")->required();
     findPackages->callback([&](){
-      CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), session->GetRepoUrl(), true);
+      auto me = getuid();
+      auto myprivs = geteuid();
+      CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), session->GetRepoUrl(), me == 0);
       std::vector<CaravelPM::CaravelPackageInfo> infos = CaravelPM::CaravelDBContext::GetDB()->FindPackagesFromNameQuery(query);
       if(infos.empty())
         std::cout << "No packages found.";
@@ -124,8 +126,12 @@ int main(int argc, char** argv){
     std::string packageName;
     listDeps->add_option("packagename", packageName, "The desired package to list dependencies with.")->required();
     listDeps->callback([&](){
-      CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), session->GetRepoUrl(), true);
-      std::vector<std::string> deps = session->getDependencies(packageName);
+      auto me = getuid();
+      auto myprivs = geteuid();
+      CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), session->GetRepoUrl(), me == 0);
+      std::string packageNamespace = CaravelPM::CaravelDBContext::GetDB()->FindNamespace(packageName);
+
+      std::vector<std::string> deps = session->getDependencies(packageName, packageNamespace);
       if(deps.empty())
         std::cout << "No dependencies found for " << packageName << ".";
       else  {
@@ -149,67 +155,88 @@ int main(int argc, char** argv){
     auto cb = [&](int count){ local_package = (count > 0);};
     CLI::Option* localPackage = installPackage->add_flag("-l,--local",cb,"Uses a local file instead of a package in a repository.");
 
-    std::string packageName;
-    installPackage->add_option("packagename", packageName, "The name of the package (or archive) to install.")->required();
+    std::vector<std::string> packages;
+    installPackage->add_option("packagename", packages, "The name of the package (or archive) to install.")->required();
   
     installPackage->callback([&](){
-      CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), session->GetRepoUrl(), true);
+      auto me = getuid();
+      auto myprivs = geteuid();
+      CaravelPM::CaravelDBContext::InitDB(session->GetDownloadUrl("pman.caraveldb"), session->GetRepoUrl(), me == 0);
 
-      auto installFromNet{
-        [](std::string pkgName, std::string pkgNS){
+      auto installFromNet =
+        [&](std::string pkgName, std::string pkgNS){
           std::cout << "Downloading Caravel Package " << pkgName << "..." << std::endl;
           std::string url = CaravelPM::CaravelDBContext::GetDB()->GetPackageLink(pkgName);
           CaravelPM::CaravelDownloader* downloader = new CaravelPM::CaravelDownloader(pkgName, url, false, pkgNS);
-
+          downloader->setTempFolder((me == 0));
           downloader->Run();
           std::cout << "Installing Caravel Package " << pkgName << "..." << std::endl;
 
-          std::filesystem::path path_pkg = std::filesystem::path(std::string("/tmp/" + pkgName + ".caravel"));
+          std::filesystem::path path_pkg = std::filesystem::path((me == 0) ? std::string("/tmp/" + pkgName + ".caravel") : std::string(std::string(getenv("HOME")) + "/"  + pkgName + ".caravel"));
 
-          CaravelPM::CaravelPackageChecker* checker = new CaravelPM::CaravelPackageChecker("/tmp/" + std::string(pkgName + ".caravel"), true, pkgName);
-          std::cout << "Loading signature file..." << std::endl;
-          std::string packageType = CaravelPM::CaravelDBContext::GetDB()->FindType(pkgName);
+          if (me == 0){
+            CaravelPM::CaravelPackageChecker* checker = new CaravelPM::CaravelPackageChecker("/tmp/" + std::string(pkgName + ".caravel"), true, pkgName);
+            std::cout << "Loading signature file..." << std::endl;
+            std::string packageType = CaravelPM::CaravelDBContext::GetDB()->FindType(pkgName);
 
-          auto packageTypeObj = session->getPackageType(packageType);
-          checker->LoadSignatureAndContents(session->GetRepoUrl(),true,packageTypeObj.ver_dir());
-          std::cout << "Verifying package..." << std::endl;
+            auto packageTypeObj = session->getPackageType(packageType);
+            checker->LoadSignatureAndContents(session->GetRepoUrl(),true,packageTypeObj.ver_dir());
+            std::cout << "Verifying package..." << std::endl;
 
-          bool isVerified = checker->Verify();
-          if (!isVerified){
-            std::cerr << "Can't extract package - marked as malicious or unknown. Exiting..." << std::endl;
-            return 1;
+            bool isVerified = checker->Verify();
+            if (!isVerified){
+              std::cerr << "Can't extract package - marked as malicious or unknown. Exiting..." << std::endl;
+              return 1;
+            }
+            delete checker;
+            std::cout << "Package is valid." << std::endl;
+          } else {
+            std::cout << "Skipping verification due to being run as current user..." << std::endl;
           }
-          delete checker;
-          session->ReadAndInstall(path_pkg.string(),std::string(pkgName + ".caravel"));
-        }
+          bool success = session->ReadAndInstall(path_pkg.string(),std::string(pkgName + ".caravel"));
+          return 0;
       };
       if(local_package){
-        std::filesystem::path path_pkg = std::filesystem::current_path() / std::filesystem::path(std::string(packageName + ".caravel"));
-        session->ReadAndInstall(path_pkg.string(), std::string(packageName + ".caravel"));
+        std::filesystem::path path_pkg = std::filesystem::current_path() / std::filesystem::path(std::string(packages.at(0) + ".caravel"));
+        session->ReadAndInstall(path_pkg.string(), std::string(packages.at(0) + ".caravel"));
         return 0;
       } else {
+        std::cout << "Installing " << packages.size() << " Package(s)..." << std::endl;
+        for (std::string packageName: packages){
           // Check if the package exists.
-        std::cout << "Searching Caravel Repository ..." << std::endl;
-        CaravelPM::CaravelPackageGroup*  pkgGroup;
-
-         std::string packageNamespace = CaravelPM::CaravelDBContext::GetDB()->FindNamespace(packageName);
-         if(packageNamespace.empty()){
-            pkgGroup = CaravelPM::CaravelDBContext::GetDB()->GetPackageGroup(packageName);
+          std::cout << "Searching Caravel Repository ..." << std::endl;
+          std::string packageNamespace = CaravelPM::CaravelDBContext::GetDB()->FindNamespace(packageName);
+          if(packageNamespace.empty()){
+            CaravelPM::CaravelPackageGroup* pkgGroup = CaravelPM::CaravelDBContext::GetDB()->GetPackageGroup(packageName);
             if(pkgGroup){
               std::cout << "Found package: " << pkgGroup->ToPackage() << std::endl;
-              packageName = pkgGroup->ToPackage();
-              std::string packageNamespace = CaravelPM::CaravelDBContext::GetDB()->FindNamespace(packageName);
+              packageNamespace = CaravelPM::CaravelDBContext::GetDB()->FindNamespace(pkgGroup->ToPackage());
 
-              installFromNet(packageName, packageNamespace);
+              std::vector<std::string> deps = session->getDependencies(pkgGroup->ToPackage(), packageNamespace);
+              if (deps.size() >  0){
+                std::cout << "Dependencies detected. Installing.." << std::endl;
+                for (const auto& dep: deps){
+                  std::string packageNamespace2 = CaravelPM::CaravelDBContext::GetDB()->FindNamespace(dep);
+                  std::cout << "--------------------------------------" << std::endl;
+                  std::cout << "         " << dep << "                " << std::endl;
+                  std::cout << "--------------------------------------" << std::endl;
+                  installFromNet(dep, packageNamespace2);
+                }
+                std::cout << "Dependencies installed. Installing main package..." << std::endl;
+              }
+
+              installFromNet(pkgGroup->ToPackage(), packageNamespace);
+              std::cout << "--------------------------------------" << std::endl;
             } else {
               std::cerr << "Can't download package; " << packageName << " doesn't exist." << std::endl;
               return 1;
             }
-         } else {
-           installFromNet(packageName, packageNamespace);
-
-         }
+          } else {
+            installFromNet(packageName, packageNamespace);
+          }
+        }
         return 0;
+
       }
     });
   }
@@ -307,7 +334,7 @@ int main(int argc, char** argv){
         session->writeToLog(CaravelPM::LogLevel::INFO, repoName + " (" + repoTitle + ") saved.");
     });
   }
-  caravelApp.footer("Caravel v0.3.5");
+  caravelApp.footer("Caravel v0.4");
   
   CLI11_PARSE(caravelApp, argc, argv);
 
